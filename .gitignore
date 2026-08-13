@@ -1,0 +1,20 @@
+# dependencies / build output
+node_modules/
+dist/
+
+# secrets
+.env
+*.key
+*.key.pub
+livekit/livekit.yaml
+
+# downloaded binaries (redownloaded via get.livekit.io / release zip)
+livekit/livekit-server.exe
+livekit/LICENSE
+
+# personal notes, not project code
+Hours.txt
+Notes.txt
+
+# OS
+.DS_Store
