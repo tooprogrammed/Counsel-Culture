@@ -1,0 +1,158 @@
+# Counsel Culture — Project Report
+
+## What this is
+
+Counsel Culture is a live video app built around **structured debate**, not
+open-ended talk. Every chat room a group hangs out in carries a paired
+**debate room**: a side space where a formal, turn-based discussion happens
+on a set topic, with an enforced speaking order, a visible timer, a live
+transcript, and on-demand fact-checking of what's being said. Anyone in the
+chat room can watch and follow the debate without joining it; anyone can
+raise their hand to join the speaker queue.
+
+This document explains the tools involved and how the pieces fit together,
+so it can be read cold and give a working mental model of the system.
+
+## Tech stack
+
+| Layer | Tool | Why |
+|---|---|---|
+| Client | React 19 + Vite + TypeScript | UI and build tooling |
+| Client routing | react-router-dom | Join screen → chat room → debate room navigation |
+| Realtime media | **LiveKit** (self-hosted `livekit-server`, open source, Apache-2.0) | WebRTC SFU — handles all audio/video transport for both room types |
+| Media client SDK | `livekit-client` + `@livekit/components-react` | Connects to LiveKit rooms, prebuilt video-grid UI, React hooks for participants/tracks/data messages |
+| Backend | Express (Node.js, ESM) | Issues LiveKit join tokens, runs the debate state machine, REST API |
+| Server-side LiveKit control | `livekit-server-sdk` (`AccessToken`, `RoomServiceClient`) | Mints signed join tokens; enforces mic permissions and broadcasts state server-side |
+| Live transcription | Browser `SpeechRecognition` API (Chrome/Edge) | Dev-scale live captioning, see **Limitations** below |
+| Fact-checking | Anthropic API (`@anthropic-ai/sdk`, Claude) | On-demand claim assessment against the live transcript |
+| Hosting (current) | Oracle Cloud "Always Free" VM (Ubuntu 22.04), systemd services | Self-hosted, zero infra cost, stable public IP |
+
+## The two-room model
+
+Every chat room named `foo` has an associated debate room named `foo::debate`.
+They are **two separate LiveKit rooms**, not one room with roles — this is
+what makes "observe the debate without leaving chat" cheap and simple: a
+chat-room participant's browser holds a second, subscribe-only connection to
+the debate room purely to receive its state and render the current speaker,
+without being a debate participant.
+
+```
+Join screen
+     |
+     v
+ Chat room  (LiveKit room "foo")
+     |  \
+     |   \--- always-on, subscribe-only connection ---> Debate room ("foo::debate")
+     |                                                        ^
+     `-- [Debate] button --------------------------------------'
+                                                    (full participant connection)
+```
+
+Three participant roles, encoded as LiveKit **token grants** (`server/src/index.js`):
+
+- **`chat`** — normal full audio+video, used in the main chat room.
+- **`debate-participant`** — camera allowed immediately; **microphone is not
+  granted at token-issue time**. It's added dynamically, per-turn, by the
+  server (see below). Used when someone clicks "Debate."
+- **`debate-observer`** — subscribe-only, can't publish anything. Used by the
+  chat room's always-connected side panel.
+
+## The debate state machine
+
+`server/src/debateEngine.js` holds one `DebateEngine` instance per debate
+room (in-memory, created on first use), and is the **single source of
+truth** for: the topic, the ordered speaker queue, whose turn it is, and the
+transcript. Clients never decide any of this themselves — they call REST
+endpoints, and the engine reacts.
+
+**Turn cycle** (90s per speaker by default):
+1. `phase: "speaking"` — current speaker has the mic, `turnEndsAt` counts down.
+2. When the timer lapses, `phase: "handoff"` for exactly 5 seconds — this is
+   the `microphone handoff : {current} --> {next}` banner.
+3. Queue advances, next speaker's turn begins, back to `speaking`.
+4. If the queue is empty, `phase: "waiting"` until someone raises their hand.
+
+**How the mic is actually enforced** (not just UI convention): the token
+grants everyone `canPublishSources: ["camera"]` only. When it becomes a
+participant's turn, the server calls
+`RoomServiceClient.updateParticipant(room, identity, { permission: { canPublishSources: ["camera", "microphone"] } })`
+— a live, server-side permission change LiveKit pushes to that already-connected
+client. When their turn ends, the server revokes it the same way. A client
+can't just unmute out of turn; LiveKit itself will refuse to publish an
+unauthorized microphone track. The client also cooperatively calls
+`localParticipant.setMicrophoneEnabled()` in sync with this so the local mic
+UI matches, but the server-side permission is what's actually authoritative.
+
+**State delivery**: the server pushes every state change to the room over
+LiveKit's built-in **reliable data channel** (`RoomServiceClient.sendData`,
+topic `"debate-state"` for state, `"debate-transcript"` for transcript lines
+and fact-check results). Every connected client — full debate participants
+*and* chat-room observers — receives the same broadcast over the same
+transport already used for media, so there's no separate WebSocket
+infrastructure to run or scale. A client that joins mid-debate hydrates via
+plain REST (`GET /debate/:room/state`, `GET /debate/:room/transcript`) first,
+then stays live off the data channel.
+
+## Live transcription and fact-checking
+
+- **Transcription**: while it's a participant's turn, their own browser runs
+  the native `SpeechRecognition` API and POSTs each finalized utterance to
+  `POST /debate/:room/transcript`. The server appends it to that room's
+  transcript (in memory) and broadcasts it to everyone.
+- **Fact-checking**: anyone (participant or chat-room observer) can click
+  "Fact-check" on any transcript line. This calls
+  `POST /debate/:room/fact-check/:lineId`, which sends the statement to
+  Claude with a constrained prompt and stores/broadcasts a structured verdict
+  (`verdict`, `explanation`, `confidence`). Fact-checking is inert (returns a
+  clear "not configured" response) unless `ANTHROPIC_API_KEY` is set in
+  `server/.env` — nothing breaks without it, the feature just stays off.
+- **The record**: `GET /debate/:room/transcript` returns the full transcript
+  with any fact-check verdicts attached, so "access to the record" is just an
+  HTTP call away for anyone, live or after the fact (until the server
+  restarts — see Limitations).
+
+## Repo layout
+
+```
+livekit/          livekit-server binary + config (gitignored: config has secrets)
+server/           Express API: tokens, debate engine, fact-checking
+  src/index.js         routes
+  src/debateEngine.js  the state machine described above
+  src/debateStore.js   per-room engine registry + RoomServiceClient
+  src/factCheck.js     Claude integration
+client/            React app
+  src/pages/           JoinPage, ChatRoomPage, DebateRoomPage
+  src/components/      DebateStatusBar, HandoffBanner, DebateObserverPanel, RemoteParticipantView
+  src/hooks/           useDebateChannel (data-channel state sync), useSpeechToTranscript
+  src/lib/             api.ts (REST client), roomNaming.ts, identity.ts
+```
+
+## Deployment
+
+Runs on a single Oracle Cloud Always Free VM today: `livekit-server` and the
+Express app both run as systemd services (`livekit.service`,
+`counsel-culture.service`), so they survive reboots and SSH disconnects. The
+Express server also serves the built client (`client/dist`) directly, so the
+whole app is one process on one port from the outside — no separate static
+host needed. See `server/.env.example` and `livekit/livekit.example.yaml` for
+the config shape (the real files hold secrets and are gitignored).
+
+## Known limitations / next steps
+
+These are deliberate scope cuts for a working first version, not oversights:
+
+- **State is in-memory, per-process.** Debate state and transcripts vanish on
+  server restart, and this can't yet run as more than one server instance
+  (a second instance would have its own, disconnected copy of every debate's
+  state). Fixing this — moving state into Redis/Postgres — is exactly the
+  multi-server scaling step described for handling hundreds of concurrent
+  users.
+- **Transcription is browser-native (Chrome/Edge only), not server-side.**
+  Fine for a live prototype; a production version should move this to a
+  proper STT service (self-hosted Whisper, or a low-latency API) so it works
+  in any browser and doesn't depend on the speaker's own device.
+- **No moderator/host role yet.** Anyone can set the topic or join the
+  speaker queue. Roles, admission control, and the "verify a stream key
+  before going live" concept from the original design are the natural next
+  layer on top of the token-issuance code.
+- **Turn duration (90s) is a constant**, not configurable per debate yet.
