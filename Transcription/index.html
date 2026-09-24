@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Voice Transcriber</title>
+
+  <link rel="stylesheet" href="style.css" />
+</head>
+
+<body>
+
+  <div class="container">
+
+    <h1>Voice Transcriber</h1>
+
+    <p class="subtitle">
+      Press start and begin speaking. Your words will appear below.
+    </p>
+
+    <div class="buttons">
+      <button id="startButton">Start Recording</button>
+      <button id="stopButton">Stop Recording</button>
+      <button id="clearButton">Clear</button>
+    </div>
+
+    <p id="status">Microphone is not recording.</p>
+
+    <div class="transcript-container">
+      <h2>Transcript</h2>
+
+      <div id="transcript"></div>
+    </div>
+
+    <div class="fact-check-container">
+
+      <h2>Fact Check</h2>
+
+      <p id="factStatus">
+        Waiting for a statement...
+      </p>
+
+    <div id="factCheck"></div>
+
+  </div>
+
+  </div>
+
+  <script src="script.js"></script>
+
+</body>
+</html>

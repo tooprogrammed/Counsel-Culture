@@ -1,0 +1,107 @@
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: Arial, sans-serif;
+  background: #f4f4f4;
+  color: #222;
+}
+
+.container {
+  max-width: 800px;
+  margin: 80px auto;
+  padding: 40px;
+  background: white;
+  border-radius: 15px;
+  box-shadow: 0 5px 20px rgba(0, 0, 0, 0.1);
+}
+
+h1 {
+  text-align: center;
+  margin-bottom: 10px;
+}
+
+.subtitle {
+  text-align: center;
+  color: #666;
+  margin-bottom: 30px;
+}
+
+.buttons {
+  display: flex;
+  justify-content: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+button {
+  border: none;
+  padding: 12px 20px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 16px;
+}
+
+#startButton {
+  background: #28a745;
+  color: white;
+}
+
+#stopButton {
+  background: #dc3545;
+  color: white;
+}
+
+#clearButton {
+  background: #333;
+  color: white;
+}
+
+button:hover {
+  opacity: 0.85;
+}
+
+#status {
+  text-align: center;
+  margin-top: 20px;
+  color: #666;
+}
+
+.transcript-container {
+  margin-top: 30px;
+}
+
+#transcript {
+  min-height: 200px;
+  padding: 20px;
+  border: 2px solid #ddd;
+  border-radius: 10px;
+  background: #fafafa;
+  font-size: 18px;
+  line-height: 1.6;
+}
+
+.fact-check-container {
+  margin-top: 30px;
+  padding: 20px;
+  border: 2px solid #ddd;
+  border-radius: 10px;
+  background: #fafafa;
+}
+
+.fact-check-container h2 {
+  margin-top: 0;
+}
+
+#factStatus {
+  color: #666;
+  font-size: 14px;
+}
+
+#factCheck {
+  white-space: pre-wrap;
+  line-height: 1.6;
+  font-size: 16px;
+}
